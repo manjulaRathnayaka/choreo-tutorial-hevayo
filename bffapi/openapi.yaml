@@ -6,9 +6,6 @@ info:
   contact:
     name: API Support
     email: support@example.com
-servers:
-  - url: http://localhost:3001/api
-    description: Local development server
 paths:
   /bills:
     get:
