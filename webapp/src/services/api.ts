@@ -98,8 +98,9 @@ export const billParserApi = {
   parseBill: async (imageFile: File): Promise<ParsedReceipt> => {
     const formData = new FormData();
     formData.append('image', imageFile);
+    formData.append('create_bill', 'false');
 
-    const response = await api.post('/parser/parse-bill', formData, {
+    const response = await api.post('/parser/parse', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
@@ -115,11 +116,12 @@ export const billParserApi = {
   }> => {
     const formData = new FormData();
     formData.append('image', imageFile);
+    formData.append('create_bill', 'true');
     if (title) {
       formData.append('title', title);
     }
 
-    const response = await api.post('/parser/create-bill-from-image', formData, {
+    const response = await api.post('/parser/parse', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
