@@ -1,6 +1,6 @@
 module github.com/jo/choreo-tutorial/accounts
 
-go 1.22.4
+go 1.23.0
 
 require (
 	github.com/go-sql-driver/mysql v1.7.1
