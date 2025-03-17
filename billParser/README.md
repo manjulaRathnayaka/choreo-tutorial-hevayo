@@ -23,7 +23,7 @@ A RESTful API that extracts item details and totals from receipt images using Op
    ```
 3. Create a `.env` file based on `.env.example` and add your OpenAI API key:
    ```
-   OPENAI_API_KEY=your_openai_api_key_here
+   CHOREO_OPEN_AI_CONNECTION_OPENAI_API_KEY=your_openai_api_key_here
    PORT=8080
    ```
 
