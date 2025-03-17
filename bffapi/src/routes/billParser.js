@@ -1,169 +1,81 @@
-/**
- * Bill Parser API Routes
- * 
- * These routes handle bill image processing by proxying to the BillParser API
- */
-
 const express = require('express');
-const router = express.Router();
 const multer = require('multer');
-const { billParserService, accountsService } = require('../utils/serviceClient');
+const FormData = require('form-data');
+const { billParserClient, accountsClient } = require('../utils/serviceClient');
+
+const parserRouter = express.Router();
 
 // Configure multer for file uploads
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 5 * 1024 * 1024, // Limit file size to 5MB
-  },
-  fileFilter: (req, file, cb) => {
-    // Accept only image files
-    if (!file.mimetype.startsWith('image/')) {
-      cb(new Error('Only image files are allowed'), false);
-    } else {
-      cb(null, true);
-    }
-  }
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 } // Limit file size to 5MB
 });
 
-/**
- * @swagger
- * tags:
- *   name: BillParser
- *   description: API endpoints to process bill images
- */
-
-/**
- * @swagger
- * /api/parser/parse-bill:
- *   post:
- *     summary: Parse a bill image
- *     tags: [BillParser]
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               image:
- *                 type: string
- *                 format: binary
- *     responses:
- *       200:
- *         description: Successfully parsed bill
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 items:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       name:
- *                         type: string
- *                       price:
- *                         type: number
- *                       quantity:
- *                         type: number
- *                 total:
- *                   type: number
- *                 currency:
- *                   type: string
- *                 date:
- *                   type: string
- *                 merchant:
- *                   type: string
- *       400:
- *         description: Invalid input or missing image
- *       500:
- *         description: Server error
- */
-router.post('/parse-bill', upload.single('image'), async (req, res, next) => {
+// Combined parser endpoint that can both parse and optionally create a bill
+parserRouter.post('/parse', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No image file provided' });
     }
 
-    const parsedData = await billParserService.parseBillImage(
-      req.file.buffer,
-      req.file.originalname
-    );
-
-    res.json(parsedData);
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * @swagger
- * /api/parser/create-bill-from-image:
- *   post:
- *     summary: Parse an image and create a bill
- *     tags: [BillParser]
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               image:
- *                 type: string
- *                 format: binary
- *               title:
- *                 type: string
- *     responses:
- *       201:
- *         description: Bill created successfully
- *       400:
- *         description: Invalid input or missing image
- *       500:
- *         description: Server error
- */
-router.post('/create-bill-from-image', upload.single('image'), async (req, res, next) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No image file provided' });
-    }
-
-    // Get the optional title or use a default
-    const title = req.body.title || 'Bill from receipt image';
-
-    // Parse the bill image
-    const parsedData = await billParserService.parseBillImage(
-      req.file.buffer,
-      req.file.originalname
-    );
-
-    // Transform the parsed data into bill format
-    const billData = {
-      title,
-      description: `Created from receipt: ${parsedData.merchant || 'Unknown merchant'}`,
-      due_date: parsedData.date || new Date().toISOString().split('T')[0],
-      paid: false,
-      items: parsedData.items.map(item => ({
-        name: item.name,
-        description: '',
-        amount: item.price,
-        quantity: item.quantity
-      }))
-    };
-
-    // Create the bill in the accounts service
-    const createdBill = await accountsService.createBill(billData);
-    
-    // Return success with the created bill info
-    res.status(201).json({
-      message: 'Bill created successfully from parsed image',
-      billId: createdBill.id,
-      parsedData
+    // Create form data with the image file
+    const formData = new FormData();
+    formData.append('image', req.file.buffer, {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype
     });
+
+    // Parse the receipt using the bill parser service
+    const parseResponse = await billParserClient.post('/parse-bill', formData, {
+      headers: {
+        ...formData.getHeaders(),
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+
+    const parsedData = parseResponse.data;
+
+    // If create_bill parameter is true, create a bill from the parsed data
+    if (req.body.create_bill === 'true') {
+      // Generate a title if not provided
+      const title = req.body.title || 
+                    (parsedData.merchant ? 
+                      `Bill from ${parsedData.merchant}` : 
+                      `Bill for $${parsedData.total}`);
+
+      // Convert parsed receipt data to bill input format
+      const billData = {
+        title,
+        total: parsedData.total,
+        due_date: parsedData.date || new Date().toISOString().split('T')[0],
+        paid: false,
+        items: parsedData.items.map(item => ({
+          name: item.name,
+          amount: item.price,
+          quantity: item.quantity
+        }))
+      };
+
+      // Create the bill using the accounts service
+      const billResponse = await accountsClient.post('/bills', billData);
+
+      // Return combined response
+      return res.json({
+        message: 'Bill created successfully',
+        billId: billResponse.data.id,
+        parsedData
+      });
+    }
+
+    // If not creating a bill, just return the parsed data
+    return res.json(parsedData);
   } catch (error) {
-    next(error);
+    console.error('Error parsing bill:', error.message);
+    res.status(error.response?.status || 500).json(
+      error.response?.data || { error: 'Failed to parse bill' }
+    );
   }
 });
 
-module.exports = router;
+module.exports = { parserRouter };
